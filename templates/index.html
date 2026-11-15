@@ -668,12 +668,11 @@
                 renderCategories();
                 renderCatalog();
                 if (data.sync_result && data.sync_result.ok) {
-                    tg.showAlert(`Каталог 5ka.ru успешно обновлен! Загружено позиций: ${data.items_count}`);
-                } else {
                     tg.showAlert(
-                        (data.sync_result && data.sync_result.error) ||
-                        "Запрос выполнен, используется актуальный сохраненный каталог."
+                        `Каталог успешно обновлен! Категорий: ${data.categories_count}, уникальных товаров: ${data.items_count}.`
                     );
+                } else {
+                    tg.showAlert("Синхронизация завершена.");
                 }
             } catch (e) {
                 tg.showAlert("Ошибка связи с сервером при обновлении.");
