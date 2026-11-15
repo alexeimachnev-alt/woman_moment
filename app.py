@@ -126,10 +126,6 @@ def manual_sync_catalog():
 
 @app.route("/api/upload_client_catalog", methods=["POST"])
 def upload_client_catalog():
-    """
-    Принимает собранный напрямую с российского IP пользователя (через браузер Mini App)
-    полный каталог 5ka.ru и сохраняет его на сервере Render с полным логированием.
-    """
     body = request.get_json(silent=True) or {}
     categories = body.get("categories", [])
     if not isinstance(categories, list) or len(categories) == 0:

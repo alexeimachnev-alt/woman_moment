@@ -5,12 +5,12 @@ import logging
 from datetime import datetime
 import pytz
 from bs4 import BeautifulSoup
+import requests as std_requests
 
 try:
     from curl_cffi import requests as cffi_requests
     HAS_CFFI = True
 except ImportError:
-    import requests as std_requests
     HAS_CFFI = False
 
 # =====================================================================
@@ -25,7 +25,6 @@ logger = logging.getLogger("5kaFullParser")
 CATALOG_FILE = "catalog_5ka.json"
 DEFAULT_STORE_CODE = os.environ.get("STORE_SAP_CODE", "Y232")
 PROXY_URL = os.environ.get("PROXY_URL", "").strip()
-USE_PLAYWRIGHT = os.environ.get("USE_PLAYWRIGHT", "0") == "1"
 MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 
 CATEGORY_ICONS = {
@@ -41,7 +40,7 @@ CATEGORY_ICONS = {
     "животн": "🐾", "кошк": "🐱", "собак": "🐶", "готовая еда": "🍱"
 }
 
-# Гарантированный резервный каталог Пятёрочки на случай жесткого геоблока IP Render
+# Гарантированный резервный каталог Пятёрочки на случай недоступности бесплатных прокси
 EXTENDED_5KA_CATALOG = [
     {
         "id": "dairy",
@@ -238,8 +237,42 @@ def guess_category_icon(cat_name: str) -> str:
     return "📦"
 
 
+def fetch_free_russian_proxies() -> list:
+    """Автоматически скачивает свежие списки бесплатных российских прокси (RU)."""
+    proxy_sources = [
+        "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=RU&ssl=all&anonymity=all",
+        "https://proxylist.geonode.com/api/proxy-list?limit=50&page=1&sort_by=lastChecked&sort_type=desc&country=RU&protocols=http%2Chttps"
+    ]
+    found_proxies = []
+
+    for url in proxy_sources:
+        try:
+            r = std_requests.get(url, timeout=6)
+            if r.status_code == 200:
+                if "geonode.com" in url:
+                    data = r.json().get("data", [])
+                    for item in data:
+                        ip = item.get("ip")
+                        port = item.get("port")
+                        if ip and port:
+                            found_proxies.append(f"http://{ip}:{port}")
+                else:
+                    for line in r.text.splitlines():
+                        line = line.strip()
+                        if ":" in line and not line.startswith("#"):
+                            found_proxies.append(f"http://{line}")
+        except Exception as e:
+            logger.debug(f"Не удалось загрузить список прокси с {url}: {e}")
+
+    return list(dict.fromkeys(found_proxies))
+
+
 def get_http_session():
-    """Создает HTTP-сессию с TLS-отпечатком Chrome для прямых XHR/Fetch запросов."""
+    """
+    Создает HTTP-сессию с TLS-отпечатком Chrome.
+    1) Если задан PROXY_URL в Render — использует его.
+    2) Иначе автоматически ищет живой бесплатный прокси РФ из открытых пулов.
+    """
     headers = {
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -249,22 +282,44 @@ def get_http_session():
         "X-Platform": "webapp",
         "X-App-Version": "v2.0"
     }
-    proxies = {"http": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
 
-    if HAS_CFFI:
-        session = cffi_requests.Session(impersonate="chrome120", proxies=proxies)
-        session.headers.update(headers)
-        return session
-    else:
-        session = std_requests.Session()
-        if proxies:
-            session.proxies.update(proxies)
-        headers["User-Agent"] = (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        )
-        session.headers.update(headers)
-        return session
+    candidates = []
+    if PROXY_URL:
+        candidates.append(PROXY_URL)
+
+    free_ru_list = fetch_free_russian_proxies()
+    if free_ru_list:
+        logger.info(f"Найдено бесплатных RU-прокси в публичных пулах: {len(free_ru_list)}. Проверяем доступность 5ka.ru...")
+        candidates.extend(free_ru_list[:20])
+
+    candidates.append(None)
+
+    test_url = f"https://5d.5ka.ru/api/catalog/v1/stores/{DEFAULT_STORE_CODE}/categories?mode=delivery"
+
+    for proxy_candidate in candidates:
+        proxies_dict = {"http": proxy_candidate, "https": proxy_candidate} if proxy_candidate else None
+        try:
+            if HAS_CFFI:
+                session = cffi_requests.Session(impersonate="chrome120", proxies=proxies_dict)
+            else:
+                session = std_requests.Session()
+                if proxies_dict:
+                    session.proxies.update(proxies_dict)
+            session.headers.update(headers)
+
+            if proxy_candidate:
+                resp = session.get(test_url, timeout=4)
+                if resp.status_code == 200 and isinstance(resp.json(), list):
+                    logger.info(f"✅ Подключен рабочий российский прокси для 5ka.ru: {proxy_candidate}")
+                    return session
+            else:
+                return session
+        except Exception:
+            continue
+
+    session = cffi_requests.Session(impersonate="chrome120") if HAS_CFFI else std_requests.Session()
+    session.headers.update(headers)
+    return session
 
 
 # =====================================================================
@@ -279,7 +334,7 @@ def fetch_categories_tree(session, store_code: str) -> list:
     ]
     for url in endpoints:
         try:
-            resp = session.get(url, timeout=12)
+            resp = session.get(url, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
                 if isinstance(data, list) and len(data) > 0:
@@ -331,7 +386,7 @@ def fetch_all_products_for_subcategory(session, store_code: str, subcat_id: str,
         page_items = None
         for url in urls:
             try:
-                resp = session.get(url, timeout=12)
+                resp = session.get(url, timeout=10)
                 if resp.status_code == 200:
                     data = resp.json()
                     page_items = data.get("products") if isinstance(data, dict) else data
@@ -348,11 +403,6 @@ def fetch_all_products_for_subcategory(session, store_code: str, subcat_id: str,
             if norm:
                 collected.append(norm)
 
-        logger.debug(
-            f"   -> Подкатегория «{subcat_name}» ({subcat_id}) | стр. {page_num} (offset={offset}): +{len(page_items)} шт."
-        )
-
-        # Если вернулось меньше, чем запрошенный лимит, значит достигнут конец списка
         if len(page_items) < limit:
             break
 
@@ -361,204 +411,6 @@ def fetch_all_products_for_subcategory(session, store_code: str, subcat_id: str,
         time.sleep(0.15)
 
     return collected
-
-
-# =====================================================================
-# 2. PLAYWRIGHT ENGINE: ОБХОД INFINITE SCROLL И КНОПОК «ПОКАЗАТЬ ЕЩЕ»
-# =====================================================================
-def scrape_with_playwright_infinite_scroll() -> list:
-    """
-    Полноценный Headless-браузер на Playwright:
-    1) Перехватывает все фоновые JSON-ответы (XHR/Fetch) витрины 5ka.ru.
-    2) Обходит все категории и подкатегории.
-    3) Выполняет цикл прокрутки (Infinite Scroll) до полной остановки роста scrollHeight
-       и автоматически нажимает кнопки «Показать еще» / «Загрузить еще», пока они не исчезнут.
-    """
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        logger.warning("[Playwright] Библиотека playwright не установлена, пропускаем браузерный обход.")
-        return []
-
-    logger.info("[Playwright] Запуск Headless Chromium для полного обхода каталога 5ka.ru...")
-    categories_map = {}
-
-    with sync_playwright() as p:
-        launch_args = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage"]}
-        if PROXY_URL:
-            launch_args["proxy"] = {"server": PROXY_URL}
-
-        browser = p.chromium.launch(**launch_args)
-        context = browser.new_context(
-            locale="ru-RU",
-            timezone_id="Europe/Moscow",
-            viewport={"width": 1440, "height": 900},
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            )
-        )
-        page = context.new_page()
-
-        # Перехватчик сетевых XHR-ответов с товарами во время скролла
-        intercepted_products = []
-
-        def handle_response(response):
-            try:
-                if "products" in response.url and response.status == 200:
-                    ctype = response.headers.get("content-type", "")
-                    if "application/json" in ctype:
-                        data = response.json()
-                        prods = data.get("products") if isinstance(data, dict) else data
-                        if isinstance(prods, list):
-                            for item in prods:
-                                norm = normalize_product(item)
-                                if norm:
-                                    intercepted_products.append(norm)
-            except Exception:
-                pass
-
-        page.on("response", handle_response)
-
-        try:
-            page.goto("https://5ka.ru/catalog/", wait_until="domcontentloaded", timeout=45000)
-            page.wait_for_timeout(3000)
-
-            # Собираем все ссылки на категории и подкатегории
-            cat_links = page.eval_on_selector_all(
-                "a[href*='/catalog/']",
-                """elements => elements.map(el => ({
-                    href: el.href,
-                    text: (el.innerText || '').trim()
-                })).filter(x => x.text.length > 2 && /\/catalog\/[0-9a-zA-Z_-]+/.test(x.href))"""
-            )
-
-            unique_cats = {}
-            for link in cat_links:
-                href = link["href"].split("?")[0].rstrip("/")
-                if href != "https://5ka.ru/catalog" and href not in unique_cats:
-                    unique_cats[href] = link["text"].split("\n")[0].strip()
-
-            logger.info(f"[Playwright] Обнаружено ссылок на категории/подкатегории: {len(unique_cats)}")
-
-            for idx, (cat_url, cat_title) in enumerate(unique_cats.items(), start=1):
-                intercepted_products.clear()
-                logger.info(f"[Playwright] ({idx}/{len(unique_cats)}) Переход в раздел «{cat_title}»: {cat_url}")
-
-                try:
-                    page.goto(cat_url, wait_until="domcontentloaded", timeout=35000)
-                    page.wait_for_timeout(2000)
-
-                    # ЦИКЛ INFINITE SCROLL + АВТОКЛИК КНОПКИ «ПОКАЗАТЬ ЕЩЕ» / «ЗАГРУЗИТЬ ЕЩЕ»
-                    unchanged_scrolls = 0
-                    last_height = page.evaluate("document.body.scrollHeight")
-                    last_item_count = 0
-
-                    while unchanged_scrolls < 3:
-                        # 1. Ищем и нажимаем кнопки «Показать еще» / «Загрузить еще», если они есть
-                        show_more_selectors = [
-                            "button:has-text('Показать ещё')",
-                            "button:has-text('Показать еще')",
-                            "button:has-text('Загрузить ещё')",
-                            "button:has-text('Загрузить еще')",
-                            "button:has-text('Ещё товары')",
-                            "[data-qa*='show-more'], [class*='show-more'], [class*='load-more']"
-                        ]
-                        clicked_button = False
-                        for sel in show_more_selectors:
-                            btn = page.locator(sel).first
-                            if btn.count() > 0 and btn.is_visible():
-                                try:
-                                    btn.scroll_into_view_if_needed()
-                                    btn.click(timeout=3000)
-                                    clicked_button = True
-                                    logger.info(f"   [Клик] Нажата кнопка «Показать еще» в разделе «{cat_title}»")
-                                    page.wait_for_timeout(1800)
-                                    break
-                                except Exception:
-                                    pass
-
-                        # 2. Прокручиваем страницу в самый низ для активации Infinite Scroll
-                        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                        page.wait_for_timeout(1800)
-
-                        new_height = page.evaluate("document.body.scrollHeight")
-                        dom_cards_count = page.locator("[data-qa*='product-card'], [class*='product-card'], article").count()
-
-                        if new_height == last_height and dom_cards_count == last_item_count and not clicked_button:
-                            unchanged_scrolls += 1
-                        else:
-                            unchanged_scrolls = 0
-                            last_height = new_height
-                            last_item_count = dom_cards_count
-
-                    # Извлекаем товары как из перехваченных XHR, так и напрямую из DOM-карточек
-                    dom_items = extract_products_from_dom_html(page.content())
-                    combined_items = {}
-                    for p_item in intercepted_products + dom_items:
-                        combined_items[p_item["id"]] = p_item
-
-                    if combined_items:
-                        cat_id = cat_url.split("/")[-1]
-                        icon = guess_category_icon(cat_title)
-                        final_list = list(combined_items.values())
-                        for it in final_list:
-                            it["icon"] = icon
-
-                        categories_map[cat_id] = {
-                            "id": cat_id,
-                            "name": cat_title,
-                            "icon": icon,
-                            "items": final_list
-                        }
-                        logger.info(
-                            f"[Playwright] Раздел «{cat_title}» полностью загружен: собрано {len(final_list)} уник. товаров."
-                        )
-
-                except Exception as cat_err:
-                    logger.warning(f"[Playwright] Ошибка обхода раздела {cat_url}: {cat_err}")
-
-        finally:
-            browser.close()
-
-    return list(categories_map.values())
-
-
-def extract_products_from_dom_html(html_content: str) -> list:
-    """Парсит карточки товаров напрямую из отрендеренного HTML после полного скролла."""
-    soup = BeautifulSoup(html_content, "html.parser")
-    results = []
-    cards = soup.select("[data-qa*='product-card'], [class*='product-card'], [class*='ProductCard']")
-    for idx, card in enumerate(cards):
-        try:
-            title_el = card.select_one("[class*='title'], [class*='name'], h3, h4, p")
-            price_el = card.select_one("[class*='price'], [data-qa*='price']")
-            img_el = card.select_one("img")
-
-            name = title_el.get_text(strip=True) if title_el else ""
-            if not name:
-                continue
-
-            raw_price = price_el.get_text(" ", strip=True) if price_el else ""
-            digits = "".join(ch if (ch.isdigit() or ch in ".,") else " " for ch in raw_price).split()
-            if not digits:
-                continue
-            price = float(digits[0].replace(",", "."))
-            img_url = img_el.get("src", "") if img_el else ""
-
-            prod_id = card.get("data-id") or card.get("id") or f"dom_{abs(hash(name)) % 10000000}"
-            results.append({
-                "id": f"p_{prod_id}",
-                "plu": str(prod_id),
-                "name": name,
-                "price": round(price, 2),
-                "unit": "шт",
-                "image": img_url,
-                "icon": "🛒"
-            })
-        except Exception:
-            continue
-    return results
 
 
 def normalize_product(raw: dict):
@@ -617,7 +469,7 @@ def normalize_product(raw: dict):
 
 
 # =====================================================================
-# 3. КОНТРОЛЬ ПОЛНОТЫ БАЗЫ, ПОДРОБНЫЙ ОТЧЕТ В ЛОГ И СОХРАНЕНИЕ
+# КОНТРОЛЬ ПОЛНОТЫ БАЗЫ, ПОДРОБНЫЙ ОТЧЕТ В ЛОГ И СОХРАНЕНИЕ
 # =====================================================================
 def log_and_save_catalog(categories: list, source_name: str, store_code: str = DEFAULT_STORE_CODE) -> dict:
     """
@@ -675,12 +527,6 @@ def log_and_save_catalog(categories: list, source_name: str, store_code: str = D
 
 
 def update_catalog_from_5ka(store_code: str = DEFAULT_STORE_CODE) -> dict:
-    """
-    Главный конвейер полного парсинга 5ka.ru:
-    Этап 1: Прямой обход всех категорий и вложенных подкатегорий через XHR API с полной пагинацией.
-    Этап 2: Если включен USE_PLAYWRIGHT=1 и XHR пуст — полный браузерный обход с Infinite Scroll и кликами «Показать еще».
-    Этап 3: Если зарубежный IP Render заблокирован фаерволом 5ka.ru — синхронизация с расширенным резервным каталогом.
-    """
     start_ts = datetime.now(MOSCOW_TZ)
     logger.info(
         f"🚀 [СТАРТ ПОЛНОГО ПАРСИНГА 5KA.RU] Время: {start_ts.strftime('%Y-%m-%d %H:%M:%S MSK')} | Магазин: {store_code}"
@@ -690,7 +536,6 @@ def update_catalog_from_5ka(store_code: str = DEFAULT_STORE_CODE) -> dict:
     parsed_categories = []
 
     try:
-        # ЭТАП 1: Прямой XHR/Fetch обход дерева категорий и всех вложенных подкатегорий
         raw_tree = fetch_categories_tree(session, store_code)
         logger.info(f"Найдено корневых разделов в дереве каталога: {len(raw_tree)}")
 
@@ -728,23 +573,9 @@ def update_catalog_from_5ka(store_code: str = DEFAULT_STORE_CODE) -> dict:
         if parsed_categories:
             return log_and_save_catalog(parsed_categories, "https://5ka.ru/catalog/ (XHR Direct API)", store_code)
 
-        # ЭТАП 2: Если задан USE_PLAYWRIGHT=1, запускаем браузерный скроллинг + клики «Показать еще»
-        if USE_PLAYWRIGHT:
-            pw_categories = scrape_with_playwright_infinite_scroll()
-            if pw_categories:
-                return log_and_save_catalog(
-                    pw_categories,
-                    "https://5ka.ru/catalog/ (Playwright Infinite Scroll)",
-                    store_code
-                )
-
-        # ЭТАП 3: Резервная синхронизация при геоблокировке зарубежного IP Render
-        logger.info(
-            "Запрос с зарубежного IP Render заблокирован геоблоком 5ka.ru. "
-            "Применяется полный встроенный каталог Пятёрочки (или используйте кнопку синхронизации со смартфона в РФ)."
-        )
+        logger.info("Прямой XHR-канал временно недоступен, синхронизация с полным встроенным каталогом Пятёрочки...")
         return log_and_save_catalog(EXTENDED_5KA_CATALOG, "Каталог Пятёрочки (Полная база)", store_code)
 
     except Exception as e:
-        logger.error(f"Критическая ошибка при обновлении каталога: {e}", exc_info=True)
+        logger.error(f"Ошибка при обновлении каталога: {e}", exc_info=True)
         return log_and_save_catalog(EXTENDED_5KA_CATALOG, "Каталог Пятёрочки (Резервная база)", store_code)
