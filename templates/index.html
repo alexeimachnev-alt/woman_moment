@@ -1,1 +1,989 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Каталог товаров — Сборка заказа</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            --bg-color: var(--tg-theme-bg-color, #f4f5f7);
+            --sec-bg: var(--tg-theme-secondary-bg-color, #ffffff);
+            --text-color: var(--tg-theme-text-color, #1c1c1e);
+            --hint-color: var(--tg-theme-hint-color, #8e8e93);
+            --accent-color: #e52421;
+            --green-accent: #2bb673;
+            --border-color: rgba(142, 142, 147, 0.2);
+        }
 
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            padding-bottom: 100px;
+        }
+
+        .header {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            background-color: var(--sec-bg);
+            padding: 12px 14px 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+        }
+
+        .header-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 800;
+            font-size: 18px;
+        }
+
+        .brand-badge {
+            background: var(--accent-color);
+            color: #fff;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 900;
+            font-size: 16px;
+        }
+
+        .recipient-pill {
+            background: rgba(229, 36, 33, 0.1);
+            color: var(--accent-color);
+            border: 1px solid rgba(229, 36, 33, 0.25);
+            padding: 6px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            max-width: 170px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .search-wrap {
+            position: relative;
+            margin-bottom: 10px;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 10px 34px 10px 36px;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-size: 14px;
+            outline: none;
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 14px;
+            color: var(--hint-color);
+        }
+
+        .search-clear {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: var(--hint-color);
+            font-size: 16px;
+            cursor: pointer;
+            display: none;
+        }
+
+        .categories-bar {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding-bottom: 4px;
+            scrollbar-width: none;
+        }
+        .categories-bar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .cat-chip {
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 12px;
+            border-radius: 10px;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .cat-chip.active {
+            background-color: var(--accent-color);
+            color: #ffffff;
+        }
+
+        .container {
+            padding: 12px 14px;
+        }
+
+        .cat-section {
+            margin-bottom: 20px;
+        }
+
+        .cat-title {
+            font-size: 17px;
+            font-weight: 700;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .items-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .item-card {
+            background-color: var(--sec-bg);
+            border-radius: 14px;
+            padding: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border: 1.5px solid transparent;
+            transition: border-color 0.15s ease;
+        }
+
+        .item-card.selected {
+            border-color: var(--green-accent);
+        }
+
+        .item-checkbox {
+            width: 22px;
+            height: 22px;
+            border-radius: 6px;
+            border: 2px solid var(--hint-color);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: all 0.15s ease;
+        }
+
+        .item-card.selected .item-checkbox {
+            background-color: var(--green-accent);
+            border-color: var(--green-accent);
+            color: #fff;
+        }
+
+        .item-icon {
+            font-size: 28px;
+            width: 42px;
+            height: 42px;
+            background: var(--bg-color);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .item-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .item-name {
+            font-size: 14px;
+            font-weight: 600;
+            line-height: 1.3;
+            margin-bottom: 4px;
+        }
+
+        .item-price {
+            font-size: 13px;
+            color: var(--hint-color);
+            font-weight: 500;
+        }
+
+        .item-price strong {
+            color: var(--text-color);
+            font-size: 14px;
+        }
+
+        .qty-controls {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
+        .qty-btn {
+            width: 30px;
+            height: 30px;
+            border-radius: 8px;
+            border: none;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-size: 18px;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .item-card.selected .qty-btn.plus {
+            background-color: var(--green-accent);
+            color: #fff;
+        }
+
+        .qty-val {
+            min-width: 22px;
+            text-align: center;
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        .bottom-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background-color: var(--sec-bg);
+            padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+            box-shadow: 0 -4px 16px rgba(0,0,0,0.1);
+            display: none;
+            z-index: 60;
+        }
+
+        .bottom-bar.visible {
+            display: block;
+        }
+
+        .checkout-btn {
+            width: 100%;
+            background-color: var(--accent-color);
+            color: #ffffff;
+            border: none;
+            border-radius: 12px;
+            padding: 14px 16px;
+            font-size: 15px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.55);
+            z-index: 100;
+            display: none;
+            align-items: flex-end;
+            justify-content: center;
+        }
+
+        .modal-overlay.open {
+            display: flex;
+        }
+
+        .modal-sheet {
+            background-color: var(--sec-bg);
+            width: 100%;
+            max-width: 520px;
+            max-height: 90vh;
+            border-radius: 20px 20px 0 0;
+            padding: 18px 16px 26px;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: 800;
+        }
+
+        .close-btn {
+            background: var(--bg-color);
+            border: none;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            font-size: 16px;
+            color: var(--text-color);
+            cursor: pointer;
+        }
+
+        .section-label {
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--hint-color);
+            margin: 14px 0 8px;
+        }
+
+        .recipient-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .recipient-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 12px;
+            border-radius: 12px;
+            background-color: var(--bg-color);
+            border: 2px solid transparent;
+            cursor: pointer;
+        }
+
+        .recipient-item.active {
+            border-color: var(--accent-color);
+            background-color: rgba(229, 36, 33, 0.06);
+        }
+
+        .rec-meta {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .rec-name {
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        .rec-id {
+            font-size: 12px;
+            color: var(--hint-color);
+        }
+
+        .del-rec-btn {
+            background: none;
+            border: none;
+            color: var(--hint-color);
+            font-size: 16px;
+            padding: 4px 8px;
+            cursor: pointer;
+        }
+
+        .add-rec-box {
+            background-color: var(--bg-color);
+            padding: 12px;
+            border-radius: 12px;
+            margin-top: 10px;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .input-field {
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            background-color: var(--sec-bg);
+            color: var(--text-color);
+            font-size: 14px;
+            outline: none;
+        }
+
+        .btn-secondary {
+            width: 100%;
+            padding: 10px;
+            border-radius: 10px;
+            border: none;
+            background-color: var(--green-accent);
+            color: #fff;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        .order-preview {
+            background-color: var(--bg-color);
+            border-radius: 12px;
+            padding: 10px 12px;
+            max-height: 180px;
+            overflow-y: auto;
+            font-size: 13px;
+        }
+
+        .preview-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .preview-row:last-child {
+            border-bottom: none;
+        }
+
+        .send-final-btn {
+            width: 100%;
+            margin-top: 16px;
+            background-color: var(--accent-color);
+            color: #fff;
+            border: none;
+            border-radius: 12px;
+            padding: 15px;
+            font-size: 16px;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .send-final-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .success-screen {
+            position: fixed;
+            inset: 0;
+            background-color: var(--sec-bg);
+            z-index: 200;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            text-align: center;
+        }
+
+        .success-screen.visible {
+            display: flex;
+        }
+
+        .success-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+        }
+
+        .success-title {
+            font-size: 22px;
+            font-weight: 800;
+            margin-bottom: 8px;
+        }
+
+        .success-desc {
+            font-size: 14px;
+            color: var(--hint-color);
+            margin-bottom: 24px;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="header-top">
+            <div class="brand">
+                <span class="brand-badge">5</span>
+                <span>Каталог заказа</span>
+            </div>
+            <button class="recipient-pill" id="topRecipientBtn" onclick="openCheckoutModal()">
+                👤 Получатель: Выбрать
+            </button>
+        </div>
+
+        <div class="search-wrap">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="searchInput" class="search-input" placeholder="Поиск по каталогу (молоко, хлеб, бананы...)" oninput="handleSearch()">
+            <button class="search-clear" id="searchClearBtn" onclick="clearSearch()">✕</button>
+        </div>
+
+        <div class="categories-bar" id="categoriesBar"></div>
+    </div>
+
+    <div class="container" id="catalogContainer"></div>
+
+    <div class="bottom-bar" id="bottomBar">
+        <button class="checkout-btn" onclick="openCheckoutModal()">
+            <span id="cartCountLabel">В заказе: 0 поз.</span>
+            <span id="cartTotalLabel">Далее • 0 ₽ →</span>
+        </button>
+    </div>
+
+    <div class="modal-overlay" id="checkoutModal">
+        <div class="modal-sheet">
+            <div class="modal-header">
+                <div class="modal-title">Оформление и получатель</div>
+                <button class="close-btn" onclick="closeCheckoutModal()">✕</button>
+            </div>
+
+            <div class="section-label">Кому отправить заказ (Telegram ID)</div>
+            <div class="recipient-list" id="recipientList"></div>
+
+            <div class="add-rec-box">
+                <div style="font-size: 12px; font-weight: 700; margin-bottom: 8px;">+ Добавить получателя в адресную книгу</div>
+                <div class="form-row">
+                    <input type="text" id="newRecName" class="input-field" placeholder="Имя (напр. Склад / Дом)">
+                    <input type="text" id="newRecId" class="input-field" placeholder="Telegram ID (цифры)" inputmode="numeric">
+                </div>
+                <button class="btn-secondary" onclick="addRecipient()">Сохранить контакт</button>
+            </div>
+
+            <div class="section-label">Состав заказа</div>
+            <div class="order-preview" id="orderPreview"></div>
+
+            <div class="section-label">Комментарий к заказу (необязательно)</div>
+            <input type="text" id="orderComment" class="input-field" placeholder="Например: Доставить до 18:00, позвонить заранее">
+
+            <button class="send-final-btn" id="sendOrderBtn" onclick="submitOrder()">
+                🚀 Отправить заказ в Telegram
+            </button>
+        </div>
+    </div>
+
+    <div class="success-screen" id="successScreen">
+        <div class="success-icon">✅</div>
+        <div class="success-title">Заказ успешно отправлен!</div>
+        <div class="success-desc" id="successDetails">
+            Список товаров доставлен выбранному получателю в личный чат Telegram.
+        </div>
+        <button class="send-final-btn" style="max-width: 280px;" onclick="resetAfterSuccess()">
+            Собрать новый заказ
+        </button>
+        <button class="btn-secondary" style="max-width: 280px; margin-top: 10px; background: var(--bg-color); color: var(--text-color);" onclick="closeMiniApp()">
+            Закрыть приложение
+        </button>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
+
+        let catalogData = [];
+        let cart = {};
+        let recipients = [];
+        let selectedRecipientId = localStorage.getItem("selected_recipient_id") || "";
+        let activeCategoryId = "all";
+        let searchQuery = "";
+
+        async function initApp() {
+            await Promise.all([fetchCatalog(), fetchRecipients()]);
+            renderCategories();
+            renderCatalog();
+            updateTopRecipientPill();
+        }
+
+        async function fetchCatalog() {
+            const res = await fetch("/api/catalog");
+            catalogData = await res.json();
+        }
+
+        async function fetchRecipients() {
+            try {
+                const res = await fetch("/api/recipients");
+                const serverRecipients = await res.json();
+
+                const localSaved = JSON.parse(localStorage.getItem("saved_recipients") || "[]");
+                const map = new Map();
+                [...serverRecipients, ...localSaved].forEach(r => {
+                    if (r && r.id) map.set(String(r.id), { id: String(r.id), name: r.name });
+                });
+                recipients = Array.from(map.values());
+                localStorage.setItem("saved_recipients", JSON.stringify(recipients));
+
+                if (!selectedRecipientId && recipients.length > 0) {
+                    selectedRecipientId = String(recipients[0].id);
+                    localStorage.setItem("selected_recipient_id", selectedRecipientId);
+                }
+            } catch (e) {
+                recipients = JSON.parse(localStorage.getItem("saved_recipients") || "[]");
+            }
+        }
+
+        function renderCategories() {
+            const bar = document.getElementById("categoriesBar");
+            let html = `<button class="cat-chip ${activeCategoryId === 'all' ? 'active' : ''}" onclick="selectCategory('all')">🔥 Все разделы</button>`;
+            catalogData.forEach(cat => {
+                const isActive = activeCategoryId === cat.id ? "active" : "";
+                html += `<button class="cat-chip ${isActive}" onclick="selectCategory('${cat.id}')">${cat.icon} ${cat.name}</button>`;
+            });
+            bar.innerHTML = html;
+        }
+
+        function selectCategory(catId) {
+            activeCategoryId = catId;
+            renderCategories();
+            renderCatalog();
+        }
+
+        function handleSearch() {
+            const input = document.getElementById("searchInput");
+            searchQuery = input.value.trim().toLowerCase();
+            document.getElementById("searchClearBtn").style.display = searchQuery ? "block" : "none";
+            renderCatalog();
+        }
+
+        function clearSearch() {
+            document.getElementById("searchInput").value = "";
+            searchQuery = "";
+            document.getElementById("searchClearBtn").style.display = "none";
+            renderCatalog();
+        }
+
+        function renderCatalog() {
+            const container = document.getElementById("catalogContainer");
+            let html = "";
+
+            catalogData.forEach(cat => {
+                if (activeCategoryId !== "all" && activeCategoryId !== cat.id) return;
+
+                const filteredItems = cat.items.filter(item =>
+                    item.name.toLowerCase().includes(searchQuery)
+                );
+
+                if (filteredItems.length === 0) return;
+
+                html += `
+                    <div class="cat-section">
+                        <div class="cat-title">${cat.icon} ${cat.name}</div>
+                        <div class="items-list">
+                `;
+
+                filteredItems.forEach(item => {
+                    const qty = cart[item.id] ? cart[item.id].qty : 0;
+                    const isSelected = qty > 0;
+
+                    html += `
+                        <div class="item-card ${isSelected ? 'selected' : ''}" id="card-${item.id}">
+                            <div class="item-checkbox" onclick="toggleItemCheckbox('${item.id}')">
+                                ${isSelected ? '✓' : ''}
+                            </div>
+                            <div class="item-icon">${item.icon}</div>
+                            <div class="item-info" onclick="toggleItemCheckbox('${item.id}')">
+                                <div class="item-name">${item.name}</div>
+                                <div class="item-price"><strong>${item.price.toFixed(2)} ₽</strong> / ${item.unit}</div>
+                            </div>
+                            <div class="qty-controls">
+                                <button class="qty-btn minus" onclick="changeQty('${item.id}', -1)">−</button>
+                                <span class="qty-val">${qty}</span>
+                                <button class="qty-btn plus" onclick="changeQty('${item.id}', 1)">+</button>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                html += `</div></div>`;
+            });
+
+            if (!html) {
+                html = `<div style="text-align:center; padding: 40px 16px; color: var(--hint-color);">По вашему запросу ничего не найдено</div>`;
+            }
+
+            container.innerHTML = html;
+            updateBottomBar();
+        }
+
+        function findItemById(itemId) {
+            for (const cat of catalogData) {
+                const found = cat.items.find(i => i.id === itemId);
+                if (found) return found;
+            }
+            return null;
+        }
+
+        function toggleItemCheckbox(itemId) {
+            if (cart[itemId]) {
+                delete cart[itemId];
+            } else {
+                const item = findItemById(itemId);
+                if (item) cart[itemId] = { ...item, qty: 1 };
+            }
+            if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+            renderCatalog();
+        }
+
+        function changeQty(itemId, delta) {
+            const item = findItemById(itemId);
+            if (!item) return;
+
+            const currentQty = cart[itemId] ? cart[itemId].qty : 0;
+            const nextQty = currentQty + delta;
+
+            if (nextQty <= 0) {
+                delete cart[itemId];
+            } else {
+                cart[itemId] = { ...item, qty: nextQty };
+            }
+            if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
+            renderCatalog();
+        }
+
+        function updateBottomBar() {
+            const items = Object.values(cart);
+            const bar = document.getElementById("bottomBar");
+
+            if (items.length === 0) {
+                bar.classList.remove("visible");
+                return;
+            }
+
+            let totalSum = 0;
+            let totalUnits = 0;
+            items.forEach(i => {
+                totalSum += i.price * i.qty;
+                totalUnits += i.qty;
+            });
+
+            document.getElementById("cartCountLabel").textContent = `В заказе: ${items.length} поз. (${totalUnits} ед.)`;
+            document.getElementById("cartTotalLabel").textContent = `К отправке • ${totalSum.toFixed(2)} ₽ →`;
+            bar.classList.add("visible");
+        }
+
+        function updateTopRecipientPill() {
+            const pill = document.getElementById("topRecipientBtn");
+            const rec = recipients.find(r => String(r.id) === String(selectedRecipientId));
+            if (rec) {
+                pill.textContent = `👤 ${rec.name}`;
+            } else {
+                pill.textContent = `👤 Получатель: Выбрать`;
+            }
+        }
+
+        function openCheckoutModal() {
+            renderRecipientsList();
+            renderOrderPreview();
+            document.getElementById("checkoutModal").classList.add("open");
+        }
+
+        function closeCheckoutModal() {
+            document.getElementById("checkoutModal").classList.remove("open");
+        }
+
+        function renderRecipientsList() {
+            const listEl = document.getElementById("recipientList");
+            if (recipients.length === 0) {
+                listEl.innerHTML = `<div style="font-size:13px; color:var(--hint-color);">Список получателей пуст. Добавьте Telegram ID ниже.</div>`;
+                return;
+            }
+
+            listEl.innerHTML = recipients.map(r => {
+                const isActive = String(r.id) === String(selectedRecipientId) ? "active" : "";
+                return `
+                    <div class="recipient-item ${isActive}" onclick="selectRecipient('${r.id}')">
+                        <div class="rec-meta">
+                            <span class="rec-name">👤 ${r.name}</span>
+                            <span class="rec-id">Telegram ID: ${r.id}</span>
+                        </div>
+                        <button class="del-rec-btn" onclick="event.stopPropagation(); deleteRecipient('${r.id}')" title="Удалить">🗑️</button>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        function selectRecipient(id) {
+            selectedRecipientId = String(id);
+            localStorage.setItem("selected_recipient_id", selectedRecipientId);
+            updateTopRecipientPill();
+            renderRecipientsList();
+        }
+
+        async function addRecipient() {
+            const nameInput = document.getElementById("newRecName");
+            const idInput = document.getElementById("newRecId");
+            const name = nameInput.value.trim();
+            const id = idInput.value.trim();
+
+            if (!name || !id) {
+                tg.showAlert("Пожалуйста, укажите имя и цифровой Telegram ID получателя.");
+                return;
+            }
+
+            try {
+                const res = await fetch("/api/recipients", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id, name })
+                });
+                const data = await res.json();
+                if (!data.ok) {
+                    tg.showAlert(data.error || "Ошибка сохранения контакта");
+                    return;
+                }
+                recipients = data.recipients;
+                localStorage.setItem("saved_recipients", JSON.stringify(recipients));
+                selectedRecipientId = String(id);
+                localStorage.setItem("selected_recipient_id", selectedRecipientId);
+
+                nameInput.value = "";
+                idInput.value = "";
+                updateTopRecipientPill();
+                renderRecipientsList();
+            } catch (e) {
+                tg.showAlert("Ошибка соединения с сервером.");
+            }
+        }
+
+        async function deleteRecipient(id) {
+            try {
+                const res = await fetch(`/api/recipients?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+                const data = await res.json();
+                if (data.ok) {
+                    recipients = data.recipients;
+                    localStorage.setItem("saved_recipients", JSON.stringify(recipients));
+                    if (String(selectedRecipientId) === String(id)) {
+                        selectedRecipientId = recipients.length ? String(recipients[0].id) : "";
+                        localStorage.setItem("selected_recipient_id", selectedRecipientId);
+                    }
+                    updateTopRecipientPill();
+                    renderRecipientsList();
+                }
+            } catch (e) {}
+        }
+
+        function renderOrderPreview() {
+            const previewEl = document.getElementById("orderPreview");
+            const items = Object.values(cart);
+
+            if (items.length === 0) {
+                previewEl.innerHTML = `<div style="color:var(--hint-color);">Корзина пуста. Выберите товары в каталоге.</div>`;
+                return;
+            }
+
+            let total = 0;
+            let html = items.map(item => {
+                const sum = item.price * item.qty;
+                total += sum;
+                return `
+                    <div class="preview-row">
+                        <span>${item.icon} ${item.name} <b>× ${item.qty} ${item.unit}</b></span>
+                        <b>${sum.toFixed(2)} ₽</b>
+                    </div>
+                `;
+            }).join("");
+
+            html += `
+                <div class="preview-row" style="margin-top:6px; font-size:14px;">
+                    <strong>ИТОГО:</strong>
+                    <strong style="color:var(--accent-color);">${total.toFixed(2)} ₽</strong>
+                </div>
+            `;
+            previewEl.innerHTML = html;
+        }
+
+        async function submitOrder() {
+            const items = Object.values(cart);
+            if (items.length === 0) {
+                tg.showAlert("Добавьте хотя бы один товар в список заказа.");
+                return;
+            }
+            if (!selectedRecipientId) {
+                tg.showAlert("Выберите получателя из списка или добавьте нового по его Telegram ID.");
+                return;
+            }
+
+            const recObj = recipients.find(r => String(r.id) === String(selectedRecipientId)) || {
+                id: selectedRecipientId,
+                name: "Получатель"
+            };
+
+            const senderUser = (tg.initDataUnsafe && tg.initDataUnsafe.user) ? tg.initDataUnsafe.user : {
+                id: "Web-клиент",
+                first_name: "Гость",
+                last_name: "",
+                username: ""
+            };
+
+            const comment = document.getElementById("orderComment").value.trim();
+            const btn = document.getElementById("sendOrderBtn");
+            btn.disabled = true;
+            btn.textContent = "⏳ Отправка заказа...";
+
+            try {
+                const res = await fetch("/api/send_order", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        recipient_id: recObj.id,
+                        recipient_name: recObj.name,
+                        sender: senderUser,
+                        items: items,
+                        comment: comment
+                    })
+                });
+
+                const data = await res.json();
+                if (data.ok) {
+                    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+                    cart = {};
+                    document.getElementById("orderComment").value = "";
+                    closeCheckoutModal();
+                    renderCatalog();
+
+                    document.getElementById("successDetails").textContent =
+                        `Заказ успешно отправлен получателю «${recObj.name}» (ID: ${recObj.id}).`;
+                    document.getElementById("successScreen").classList.add("visible");
+                } else {
+                    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("error");
+                    tg.showAlert(data.error || "Ошибка при отправке заказа.");
+                }
+            } catch (e) {
+                tg.showAlert("Ошибка сети при отправке заказа.");
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "🚀 Отправить заказ в Telegram";
+            }
+        }
+
+        function resetAfterSuccess() {
+            document.getElementById("successScreen").classList.remove("visible");
+        }
+
+        function closeMiniApp() {
+            tg.close();
+        }
+
+        initApp();
+    </script>
+</body>
+</html>
