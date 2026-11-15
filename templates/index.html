@@ -43,7 +43,7 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 10px;
+            margin-bottom: 6px;
         }
 
         .brand {
@@ -51,7 +51,7 @@
             align-items: center;
             gap: 8px;
             font-weight: 800;
-            font-size: 18px;
+            font-size: 17px;
         }
 
         .brand-badge {
@@ -76,10 +76,28 @@
             font-size: 12px;
             font-weight: 600;
             cursor: pointer;
-            max-width: 170px;
+            max-width: 175px;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+        }
+
+        .sync-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--hint-color);
+            margin-bottom: 8px;
+        }
+
+        .sync-btn {
+            background: none;
+            border: none;
+            color: var(--green-accent);
+            font-weight: 700;
+            font-size: 11px;
+            cursor: pointer;
         }
 
         .search-wrap {
@@ -210,15 +228,22 @@
         }
 
         .item-icon {
-            font-size: 28px;
-            width: 42px;
-            height: 42px;
+            font-size: 26px;
+            width: 44px;
+            height: 44px;
             background: var(--bg-color);
             border-radius: 10px;
             display: flex;
             align-items: center;
             justify-content: center;
             flex-shrink: 0;
+            overflow: hidden;
+        }
+
+        .item-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
         }
 
         .item-info {
@@ -532,6 +557,11 @@
             </button>
         </div>
 
+        <div class="sync-bar">
+            <span id="updatedAtLabel">Автообновление: ежедневно в 01:00 МСК</span>
+            <button class="sync-btn" id="manualSyncBtn" onclick="triggerManualSync()">🔄 Обновить сейчас</button>
+        </div>
+
         <div class="search-wrap">
             <span class="search-icon">🔍</span>
             <input type="text" id="searchInput" class="search-input" placeholder="Поиск по каталогу (молоко, хлеб, бананы...)" oninput="handleSearch()">
@@ -616,7 +646,41 @@
 
         async function fetchCatalog() {
             const res = await fetch("/api/catalog");
-            catalogData = await res.json();
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                catalogData = data;
+            } else {
+                catalogData = data.categories || [];
+                if (data.updated_at) {
+                    document.getElementById("updatedAtLabel").textContent = `База от: ${data.updated_at} (авто в 01:00)`;
+                }
+            }
+        }
+
+        async function triggerManualSync() {
+            const btn = document.getElementById("manualSyncBtn");
+            btn.disabled = true;
+            btn.textContent = "⏳ Парсинг 5ka.ru...";
+            try {
+                const res = await fetch("/api/sync_catalog", { method: "POST" });
+                const data = await res.json();
+                await fetchCatalog();
+                renderCategories();
+                renderCatalog();
+                if (data.sync_result && data.sync_result.ok) {
+                    tg.showAlert(`Каталог 5ka.ru успешно обновлен! Загружено позиций: ${data.items_count}`);
+                } else {
+                    tg.showAlert(
+                        (data.sync_result && data.sync_result.error) ||
+                        "Запрос выполнен, используется актуальный сохраненный каталог."
+                    );
+                }
+            } catch (e) {
+                tg.showAlert("Ошибка связи с сервером при обновлении.");
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "🔄 Обновить сейчас";
+            }
         }
 
         async function fetchRecipients() {
@@ -646,7 +710,7 @@
             let html = `<button class="cat-chip ${activeCategoryId === 'all' ? 'active' : ''}" onclick="selectCategory('all')">🔥 Все разделы</button>`;
             catalogData.forEach(cat => {
                 const isActive = activeCategoryId === cat.id ? "active" : "";
-                html += `<button class="cat-chip ${isActive}" onclick="selectCategory('${cat.id}')">${cat.icon} ${cat.name}</button>`;
+                html += `<button class="cat-chip ${isActive}" onclick="selectCategory('${cat.id}')">${cat.icon || '📦'} ${cat.name}</button>`;
             });
             bar.innerHTML = html;
         }
@@ -678,7 +742,7 @@
             catalogData.forEach(cat => {
                 if (activeCategoryId !== "all" && activeCategoryId !== cat.id) return;
 
-                const filteredItems = cat.items.filter(item =>
+                const filteredItems = (cat.items || []).filter(item =>
                     item.name.toLowerCase().includes(searchQuery)
                 );
 
@@ -686,23 +750,26 @@
 
                 html += `
                     <div class="cat-section">
-                        <div class="cat-title">${cat.icon} ${cat.name}</div>
+                        <div class="cat-title">${cat.icon || '📦'} ${cat.name}</div>
                         <div class="items-list">
                 `;
 
                 filteredItems.forEach(item => {
                     const qty = cart[item.id] ? cart[item.id].qty : 0;
                     const isSelected = qty > 0;
+                    const visualThumb = item.image
+                        ? `<img src="${item.image}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='${item.icon || '🛒'}'">`
+                        : (item.icon || "🛒");
 
                     html += `
                         <div class="item-card ${isSelected ? 'selected' : ''}" id="card-${item.id}">
                             <div class="item-checkbox" onclick="toggleItemCheckbox('${item.id}')">
                                 ${isSelected ? '✓' : ''}
                             </div>
-                            <div class="item-icon">${item.icon}</div>
+                            <div class="item-icon">${visualThumb}</div>
                             <div class="item-info" onclick="toggleItemCheckbox('${item.id}')">
                                 <div class="item-name">${item.name}</div>
-                                <div class="item-price"><strong>${item.price.toFixed(2)} ₽</strong> / ${item.unit}</div>
+                                <div class="item-price"><strong>${Number(item.price).toFixed(2)} ₽</strong> / ${item.unit || 'шт'}</div>
                             </div>
                             <div class="qty-controls">
                                 <button class="qty-btn minus" onclick="changeQty('${item.id}', -1)">−</button>
@@ -726,7 +793,7 @@
 
         function findItemById(itemId) {
             for (const cat of catalogData) {
-                const found = cat.items.find(i => i.id === itemId);
+                const found = (cat.items || []).find(i => i.id === itemId);
                 if (found) return found;
             }
             return null;
@@ -896,7 +963,7 @@
                 total += sum;
                 return `
                     <div class="preview-row">
-                        <span>${item.icon} ${item.name} <b>× ${item.qty} ${item.unit}</b></span>
+                        <span>${item.icon || '🛒'} ${item.name} <b>× ${item.qty} ${item.unit}</b></span>
                         <b>${sum.toFixed(2)} ₽</b>
                     </div>
                 `;
